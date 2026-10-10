@@ -2,7 +2,7 @@
 
 > Arbeitstitel: **„Tagwerk“** – Android-App zum Diktieren von Notizen und Tagebucheinträgen, mit KI-gestützter Transkription, Ausformulierung, Aufgaben-Extraktion, Kategorisierung und Achtsamkeitsfunktionen.
 
-Stand: 10.10.2026 · Status: Entwurf v0.1 (offene Fragen siehe Abschnitt 13)
+Stand: 10.10.2026 · Status: Entwurf v0.2 (Entscheidungen siehe Abschnitt 13, Frontend siehe Abschnitt 7)
 
 ---
 
@@ -139,7 +139,7 @@ Grundsatz: Hinweise sind kurz, freundlich, nie belehrend, und lassen sich in den
 | Widget | Jetpack Glance | Homescreen-Aufnahme-Widget |
 | Sperre | BiometricPrompt | App-Sperre per Fingerabdruck/PIN |
 | Min. Android | API 26 (Android 8) – Ziel API 35+ | breite Abdeckung |
-| Verteilung | signierte **APK** (Sideload) bzw. später Play Store / F-Droid | „installierbar“ ohne Store möglich |
+| Verteilung | signierte **APK** (Sideload), gebaut per CI | nur für den Eigengebrauch, kein Store nötig |
 
 ### 4.3 KI-Anbindung (OpenAI, austauschbar)
 
@@ -258,17 +258,135 @@ UsageLog
 
 ---
 
-## 7. UI-Struktur (Screens)
+## 7. Frontend-Konzept
 
-1. **Home:** großer Mikrofon-Button, Umschalter Notiz/Tagebuch, heutige offene Aufgaben, Hinweis „Heute noch kein Tagebucheintrag“.
-2. **Aufnahme-Overlay:** Wellenform, Pause/Fortsetzen, Abbrechen, Fertig.
-3. **Notizliste:** Tabs *Offen / Erledigt / Alle*, Kategorie-Chips als Filter, Suche, Swipe zum Erledigen.
-4. **Notiz-Detail:** Original-Text, Kategorien (KI-Vorschläge gestrichelt markiert), Audio abspielen, Link zum Ursprungs-Tagebucheintrag.
-5. **Tagebuch-Dialog:** Chat-artige Ansicht (App-Fragen links, eigene Antworten rechts), Mikrofon unten.
-6. **Tagebuch-Review:** Tabs *Tagebuch* / *Tagesbericht* / *Aufgaben (n)*; Bearbeiten, Neu generieren.
-7. **Verlauf:** Kalender mit Stimmungsfarben, Liste der Einträge, Wochenrückblick.
-8. **Achtsamkeit:** Übungen (Atmen, Body-Scan), gespeicherte Kraftquellen.
-9. **Einstellungen:** API-Key, Base-URL, Modelle, Kategorien verwalten, Auto-Kategorisierung an/aus, Tonalität, Erinnerungszeit, Audio behalten ja/nein, App-Sperre, Export/Backup, Verbrauch.
+### 7.1 Grundentscheidungen
+
+| Thema | Entscheidung |
+|---|---|
+| UI-Toolkit | **Jetpack Compose** mit **Material 3** – kein XML, keine WebView, kein Cross-Platform-Framework (nur Android, nur ein Nutzer → native ist am einfachsten und schnellsten) |
+| Struktur | **Single-Activity**, Navigation per **Navigation Compose** (typsichere Routen) |
+| State | **Unidirektionaler Datenfluss:** ViewModel hält einen `UiState` (StateFlow), Screens sind zustandslose Composables und melden Aktionen als Events zurück → jeder Screen ist mit `@Preview` und Fake-Daten testbar |
+| Theme | ruhige, warme Farbpalette (Eigenes Theme, optional Dynamic Color), **Dark Mode**, große, gut lesbare Typografie für Tagebuchtexte (Serifenschrift für Prosa, Sans für UI) |
+| Bedienprinzip | **Voice-first:** Jeder Hauptscreen erreicht die Aufnahme mit einem Tipp; Tippen/Bearbeiten ist immer möglich, aber zweitrangig |
+| Rückmeldung | Haptik beim Start/Stopp der Aufnahme, dezente Animationen, klare Zustände (aufnehmen → transkribieren → verarbeiten) |
+| Barrierefreiheit | TalkBack-Labels, Mindest-Touch-Größe 48 dp, skalierbare Schrift |
+
+### 7.2 Navigation
+
+Untere Navigationsleiste mit vier Bereichen, Einstellungen über das Zahnrad oben rechts:
+
+```
+┌─────────────────────────────────────┐
+│  Heute   Notizen   Tagebuch  Verlauf│
+└─────────────────────────────────────┘
+```
+
+Zusätzliche Einstiege ohne die App zu öffnen:
+- **Homescreen-Widget** (Glance): zwei Buttons „Notiz“ / „Tagebuch“ + Anzahl offener Aufgaben
+- **Launcher-Shortcuts** (lange auf das App-Icon drücken): „Neue Notiz“, „Tagebuch starten“
+- **Quick-Settings-Kachel**: Notiz diktieren direkt aus der Benachrichtigungsleiste
+- **Benachrichtigung** für die Abend-Erinnerung mit Direkt-Aktion „Tagebuch starten“
+
+### 7.3 Screens
+
+**Heute (Startbildschirm)**
+```
+┌──────────────────────────────┐
+│ Samstag, 10. Oktober     ⚙   │
+│                              │
+│  Wie war dein Tag bisher?    │
+│  ┌────────────────────────┐  │
+│  │  ✎ Tagebuch starten    │  │  ← wird nach Eintrag zu
+│  └────────────────────────┘  │     „Eintrag ergänzen“
+│                              │
+│  Offene Aufgaben (3)         │
+│  ○ Steuerberater anrufen     │
+│  ○ Reifenwechsel buchen      │
+│  ○ Geschenk für Anna         │
+│                              │
+│  Zu bestätigen (2) ›         │  ← aus Tagebuch extrahiert
+│                              │
+│            ( 🎤 )            │  ← großer Button: Notiz
+│     halten = sofort Notiz    │
+└──────────────────────────────┘
+```
+- Großer Mikrofon-Button: **Tippen** startet/stoppt Aufnahme, **Halten** = Push-to-talk (loslassen speichert).
+- Karte „Zu bestätigen“ sammelt KI-Vorschläge (Aufgaben, Kategorien), damit nichts ungefragt angelegt wird.
+
+**Aufnahme (Bottom Sheet über dem aktuellen Screen)**
+- Live-Wellenform, Timer, Buttons *Abbrechen / Pause / Fertig*.
+- Danach Statuswechsel im selben Sheet: „Wird transkribiert …“ → Transkript erscheint → „Gespeichert in *Auto* (KI-Vorschlag) – ändern?“ als Snackbar mit Rückgängig.
+- Ohne Netz: „Gespeichert, wird transkribiert, sobald du online bist.“
+
+**Notizen**
+- Segmentierte Auswahl *Offen / Erledigt / Alle*, darunter horizontal scrollbare **Kategorie-Chips** als Filter, Suchfeld oben.
+- Listeneinträge: Titel, erste Textzeile, Kategorie-Punkte, Datum, Herkunfts-Symbol (🎤 diktiert / 📖 aus Tagebuch).
+- **Wischen nach rechts = erledigt**, nach links = löschen (mit Rückgängig).
+- KI-vorgeschlagene, noch nicht bestätigte Kategorien werden als **umrandete Chips mit ✨** dargestellt; Tipp = bestätigen, langer Druck = ändern.
+
+**Notiz-Detail**
+- Original-Transkript (editierbar), Audio-Player, Kategorien, Status-Schalter, Link „aus Tagebuch vom 08.10.“.
+
+**Tagebuch – Dialog (Herzstück)**
+```
+┌──────────────────────────────┐
+│ ←  Tagebuch · 10. Oktober    │
+│                              │
+│ ┌──────────────────────┐     │
+│ │ Wie geht es dir      │ 🔊  │  ← App (links), wird vorgelesen
+│ │ gerade?              │     │
+│ └──────────────────────┘     │
+│   😞  🙁  😐  🙂  😄          │  ← Schnellantwort
+│                              │
+│        ┌─────────────────┐   │
+│        │ Ganz okay, etwas│   │  ← eigene Antwort (rechts)
+│        │ müde …          │   │
+│        └─────────────────┘   │
+│ ┌──────────────────────┐     │
+│ │ Erzähl mir von       │     │
+│ │ deinem Tag.          │     │
+│ └──────────────────────┘     │
+│                              │
+│ [Freihändig ◉]   ( 🎤 )  [Fertig]
+└──────────────────────────────┘
+```
+- Chat-Darstellung: Fragen der App links, eigene (transkribierte) Antworten rechts; jede Antwort antippbar zum Korrigieren.
+- **Freihändig-Modus** (Schalter): Die App liest jede Frage vor (TTS), startet danach automatisch die Aufnahme und beendet sie nach einigen Sekunden Stille (Stille-Erkennung über die Aufnahmepegel). Damit ist ein kompletter Eintrag ohne Bildschirmberührung möglich, z. B. beim Spazierengehen.
+- Sprachbefehle im Freihändig-Modus: „weiter“, „überspringen“, „fertig“.
+- **Fertig** startet die Verarbeitung → Fortschrittsanzeige mit Schritten (Transkribieren · Schreiben · Aufgaben finden).
+
+**Tagebuch – Review**
+- Drei Tabs: **Tagebuch** (Prosa, Serifenschrift, Lesedarstellung, Stift-Symbol zum Bearbeiten) · **Tagesbericht** (Abschnitte: Ereignisse, Erfolge, Belastungen, Erkenntnisse) · **Aufgaben (n)**.
+- Aufgaben-Tab als Karten-Liste: je Karte Text, Datum, Kategorie-Vorschlag, Buttons **✓ übernehmen / ✕ verwerfen / ✎ bearbeiten**, oben „Alle übernehmen“.
+- Darunter die **Achtsamkeits-Karte** mit dem passenden Hinweis (z. B. „Anstrengender Tag – 2 Minuten durchatmen?“ → startet Übung).
+- Button „Neu formulieren“ mit Tonalitätsauswahl.
+
+**Verlauf**
+- Monatskalender, Tage eingefärbt nach Stimmung (Farbskala + Symbol, damit es nicht nur über Farbe funktioniert); Tipp öffnet den Eintrag.
+- Darunter Wochenkurve Stimmung/Belastung und eine Liste der Einträge mit Suchfunktion.
+
+**Achtsamkeits-Übung (Vollbild)**
+- Animierter Atemkreis (einatmen 4 s · halten · ausatmen 6 s), optional mit Sprachansage; 1/2/3 Minuten wählbar. Bildschirm bleibt an.
+
+**Einstellungen**
+- *KI-Verbindung:* Base-URL, API-Key (maskiert), Modell je Aufgabe, Button „Verbindung testen“.
+- *Sprache & Stimme:* TTS-Quelle (Android-Systemstimme offline / OpenAI-Stimme), Stimme, Sprechtempo, Stille-Dauer für Auto-Stopp.
+- *Notizen:* Kategorien verwalten (umbenennen, zusammenführen, Farbe), Auto-Kategorisierung *vergeben / nur vorschlagen*.
+- *Tagebuch:* Tonalität, Rückfragen an/aus, Dankbarkeitsfrage an/aus, Erinnerungszeit.
+- *Datenschutz:* App-Sperre, Audio-Aufbewahrung, Export/Import, Verbrauch & Kosten.
+
+### 7.4 Ersteinrichtung (Onboarding, einmalig)
+1. Kurzer Hinweis, welche Daten an den konfigurierten KI-Endpunkt gehen.
+2. Base-URL + API-Key eingeben → „Verbindung testen“.
+3. Mikrofon- und Benachrichtigungs-Berechtigung.
+4. Optional: App-Sperre, Erinnerungszeit, erste Kategorien (Vorschläge: Arbeit, Privat, Haushalt, Gesundheit, Finanzen, Ideen).
+
+### 7.5 Technische Umsetzung im Frontend
+- Paketstruktur je Feature: `ui/home`, `ui/notes`, `ui/diary`, `ui/history`, `ui/mindfulness`, `ui/settings`, gemeinsame Bausteine in `ui/components` (RecordButton, Waveform, CategoryChip, MoodPicker, ChatBubble).
+- Aufnahme läuft in einem **Foreground Service**, damit sie bei gesperrtem Bildschirm (Freihändig-Modus) weiterläuft; die UI beobachtet den Service-Zustand über einen Flow.
+- TTS über ein `SpeechOutput`-Interface mit zwei Implementierungen: Android `TextToSpeech` (offline, sofort) und OpenAI-TTS (natürlicher). Standard: Systemstimme, umschaltbar.
+- Lange KI-Verarbeitung läuft über WorkManager; die UI zeigt den Fortschritt und kann geschlossen werden – das Ergebnis erscheint später unter „Zu bestätigen“.
 
 ---
 
@@ -280,7 +398,7 @@ Tagebuchdaten sind hochsensibel. Daher:
 - **App-Sperre** via Biometrie/PIN.
 - **Transparenz:** Beim Einrichten klarer Hinweis, dass Audio/Text zur Verarbeitung an OpenAI (bzw. den konfigurierten Endpunkt) gesendet werden. OpenAI verwendet API-Daten laut eigener Policy standardmäßig nicht zum Training; eine Aufbewahrung zu Missbrauchszwecken ist aber möglich – das sollte der Nutzer wissen.
 - **Datenminimierung:** Nur der aktuell benötigte Text wird gesendet (keine kompletten Historien); für die Kategorisierung nur Kategorienamen.
-- **Austauschbarer Endpunkt** ermöglicht später einen EU-gehosteten oder lokalen Dienst.
+- **Eigener Endpunkt:** Base-URL frei wählbar (z. B. EU-gehosteter oder lokaler OpenAI-kompatibler Dienst).
 - **Audio löschen** nach erfolgreicher Transkription als Option (Standard: behalten 30 Tage).
 - **Export/Backup:** verschlüsselter Export (JSON + Markdown) in eine Datei; kein Cloud-Zwang.
 - `android:allowBackup` nur für den verschlüsselten Export, keine unverschlüsselten Auto-Backups.
@@ -307,13 +425,13 @@ Projektgerüst (Compose, Hilt, Room/SQLCipher), CI-Build einer signierten APK, E
 Aufnahme, Transkription, Notiz speichern, offen/erledigt, Kategorien inkl. KI-Vorschlag, Liste mit Filtern.
 
 **Phase 2 – Tagebuch (≈ 3 Wochen)**
-Dialog-Flow mit Check-in, Rückfragen, Structured-Output-Verarbeitung, Review-Screen, Aufgaben → Notizen.
+Dialog-Flow mit Check-in, Rückfragen, Sprachausgabe & Freihändig-Modus, Structured-Output-Verarbeitung, Review-Screen, Aufgaben → Notizen (nach Bestätigung).
 
 **Phase 3 – Achtsamkeit (≈ 2 Wochen)**
 MindfulnessEngine, Hinweise, Atemübungen, Stimmungsverlauf/Kalender, Abend-Erinnerung.
 
 **Phase 4 – Komfort & Härtung (≈ 2 Wochen)**
-Widget, Quick-Settings-Kachel, Offline-Queue, App-Sperre, Export/Backup, Verbrauchsanzeige, TTS.
+Widget, Quick-Settings-Kachel, Offline-Queue, App-Sperre, Export/Backup, Verbrauchsanzeige.
 
 **Später / Ideen**
 Wochen- und Monatsrückblicke, Erinnerungen bei Fälligkeit, semantische Suche („Wann hatte ich zuletzt Rückenschmerzen?“) über Embeddings, Fotos zu Einträgen, Wear-OS-Diktat, Sync zwischen Geräten (Ende-zu-Ende-verschlüsselt), Desktop-/Web-Ansicht.
@@ -342,15 +460,18 @@ Wochen- und Monatsrückblicke, Erinnerungen bei Fälligkeit, semantische Suche (
 
 ---
 
-## 13. Offene Fragen an dich
+## 13. Entscheidungen
 
-1. **Nutzerkreis:** Ist die App nur für dich persönlich gedacht oder soll sie später veröffentlicht werden (Play Store, mehrere Nutzer)? Das beeinflusst u. a. Onboarding, Datenschutzerklärung und ob ein eigener Server/Proxy für den API-Key nötig ist.
-2. **API-Key:** Gibst du deinen eigenen OpenAI-Key in der App ein (einfachste Lösung), oder soll es einen Backend-Proxy geben?
-3. **Sync/Backup:** Reicht rein lokale Speicherung mit manuellem Export, oder brauchst du Synchronisation (z. B. zweites Gerät, PC-Zugriff)?
-4. **Aufgaben-Übernahme:** Sollen extrahierte Aufgaben automatisch als Notizen angelegt werden oder erst nach deiner Bestätigung (Konzept-Standard: Bestätigung)?
-5. **Rückfragen im Dialog:** Wünschst du dir aktive KI-Rückfragen beim Tagebuch, oder lieber nur Check-in + freies Erzählen?
-6. **Sprachausgabe:** Soll die App ihre Fragen auch vorlesen (freihändig, z. B. beim Spazierengehen/Autofahren)?
-7. **Audio aufbewahren:** Originalaufnahmen dauerhaft behalten, zeitlich begrenzt oder sofort nach Transkription löschen?
-8. **Fälligkeiten & Erinnerungen:** Sollen Notizen/Aufgaben Termine und Push-Erinnerungen bekommen – oder bewusst schlicht bleiben (offen/erledigt)?
-9. **Tagebuch-Stil:** Gibt es einen bevorzugten Ton für den Prosatext (nüchtern, erzählerisch, literarisch)?
-10. **Entwicklung:** Möchtest du selbst mitentwickeln (dann ggf. Kotlin vs. Flutter/React Native nach deinen Kenntnissen wählen) oder soll ich direkt mit der Umsetzung (Phase 0/1) in diesem Repository beginnen?
+| Frage | Entscheidung |
+|---|---|
+| Nutzerkreis | **Nur für mich** – kein Store, kein Mehrbenutzer-Konzept, Verteilung als signierte APK |
+| KI-Anbindung | **Eigene Base-URL und eigener API-Key**, in der App konfigurierbar (kein Backend) |
+| Sync | **Kein Sync** – nur lokale Speicherung, manueller verschlüsselter Export als Backup |
+| Aufgaben aus dem Tagebuch | **Erst nach Bestätigung** als Notiz anlegen |
+| Sprachausgabe | **Ja** – Fragen und Übungen werden vorgelesen, inkl. Freihändig-Modus |
+| Umsetzung | **Kotlin / Jetpack Compose**, Umsetzung in diesem Repository |
+
+Noch offen (bis zur Klärung gelten die Standardwerte):
+- Audio-Aufbewahrung – Standard: 30 Tage, danach automatisch löschen.
+- Fälligkeitsdaten & Erinnerungen für Notizen – Standard: optionales Datum, Erinnerungen erst in einer späteren Phase.
+- Tonalität des Tagebuchtexts – Standard: „erzählerisch“, in den Einstellungen änderbar.
