@@ -2,7 +2,7 @@
 
 > Arbeitstitel: **„Tagwerk“** – Android-App zum Diktieren von Notizen und Tagebucheinträgen, mit KI-gestützter Transkription, Ausformulierung, Aufgaben-Extraktion, Kategorisierung und Achtsamkeitsfunktionen.
 
-Stand: 10.10.2026 · Status: Entwurf v0.2 (Entscheidungen siehe Abschnitt 13, Frontend siehe Abschnitt 7)
+Stand: 10.10.2026 · Status: Entwurf v0.3 (Entscheidungen siehe Abschnitt 13, Frontend siehe Abschnitt 7)
 
 ---
 
@@ -388,6 +388,30 @@ Zusätzliche Einstiege ohne die App zu öffnen:
 - TTS über ein `SpeechOutput`-Interface mit zwei Implementierungen: Android `TextToSpeech` (offline, sofort) und OpenAI-TTS (natürlicher). Standard: Systemstimme, umschaltbar.
 - Lange KI-Verarbeitung läuft über WorkManager; die UI zeigt den Fortschritt und kann geschlossen werden – das Ergebnis erscheint später unter „Zu bestätigen“.
 
+### 7.6 Android Auto (Feierabend-Fahrt)
+
+Ziel: Auf der Heimfahrt den Tagebucheintrag per Sprache machen und Notizen diktieren – ohne aufs Handy oder den Bildschirm zu schauen.
+
+**Rahmenbedingungen von Android Auto**
+- Android Auto erlaubt nur bestimmte App-Arten mit festen, ablenkungsarmen Vorlagen (Templates); freie Oberflächen, Textfelder und lange Texte sind während der Fahrt nicht möglich.
+- Nicht aus dem Play Store installierte Apps erscheinen erst, wenn in den **Android-Auto-Entwicklereinstellungen „Unbekannte Quellen“** aktiviert ist (einmalig: in den Android-Auto-Einstellungen mehrfach auf die Versionsnummer tippen → Entwicklermodus).
+- Lesen, Bearbeiten und Bestätigen der Ergebnisse (Review) passiert **immer später am Handy**, nie während der Fahrt.
+
+**Stufe 1 – Messaging-Integration (zuverlässig, geringer Aufwand)**
+Die App tritt in Android Auto wie ein Messenger auf (Benachrichtigungen im `MessagingStyle` mit Antwort-Aktion):
+- **Auslöser:** Wenn sich das Handy mit Android Auto verbindet (Erkennung über `CarConnection`) und es nach der eingestellten Feierabendzeit ist, schickt die App eine „Nachricht“: *„Feierabend! Wie war dein Tag?“*
+- Android Auto **liest die Frage vor**; man antwortet per Sprache, die Antwort kommt als Text in der App an.
+- Die App schickt die nächste Frage (Rückfrage der KI) als neue Nachricht → so entsteht der Tagebuch-Dialog. „Fertig“ als Antwort beendet den Eintrag; die Verarbeitung läuft im Hintergrund, das Ergebnis liegt später unter „Zu bestätigen“.
+- Ein zweiter „Chat“ namens **Notizen**: jede Antwort darauf wird als Notiz gespeichert und kategorisiert.
+- Einschränkung: Die Spracherkennung übernimmt hier Googles Sprachassistent (nicht der eigene KI-Endpunkt), und sehr lange Antworten werden ggf. abgeschnitten – daher eher in mehreren kurzen Antworten erzählen.
+
+**Stufe 2 – Eigene Android-Auto-Oberfläche (Car App Library, optional)**
+- Eigener Eintrag im Android-Auto-Launcher mit großen Buttons **„Notiz“** und **„Tagebuch“**.
+- Aufnahme über das Fahrzeugmikrofon (`CarAudioRecord`, Car-App-API-Level 5+), Transkription über den eigenen KI-Endpunkt, Fragen per Sprachausgabe → gleiche Qualität wie in der App, keine Längenbegrenzung.
+- Offener Punkt: Die Car App Library ist offiziell nur für bestimmte App-Kategorien (z. B. Navigation, Messaging, Media) vorgesehen; ob eine privat installierte App dieser Art zuverlässig läuft, muss mit dem Desktop Head Unit (Android-Auto-Emulator) und im eigenen Auto geprüft werden.
+
+**Empfehlung:** Stufe 1 zuerst umsetzen; Stufe 2 als Prototyp prüfen und nur weiterverfolgen, wenn er stabil läuft.
+
 ---
 
 ## 8. Datenschutz & Sicherheit
@@ -433,6 +457,9 @@ MindfulnessEngine, Hinweise, Atemübungen, Stimmungsverlauf/Kalender, Abend-Erin
 **Phase 4 – Komfort & Härtung (≈ 2 Wochen)**
 Widget, Quick-Settings-Kachel, Offline-Queue, App-Sperre, Export/Backup, Verbrauchsanzeige.
 
+**Phase 5 – Android Auto (≈ 2 Wochen)**
+Stufe 1 (Messaging-Integration, Feierabend-Check-in beim Verbinden), danach Prototyp Stufe 2 (eigene Car-App-Oberfläche mit Fahrzeugmikrofon).
+
 **Später / Ideen**
 Wochen- und Monatsrückblicke, Erinnerungen bei Fälligkeit, semantische Suche („Wann hatte ich zuletzt Rückenschmerzen?“) über Embeddings, Fotos zu Einträgen, Wear-OS-Diktat, Sync zwischen Geräten (Ende-zu-Ende-verschlüsselt), Desktop-/Web-Ansicht.
 
@@ -455,6 +482,7 @@ Wochen- und Monatsrückblicke, Erinnerungen bei Fälligkeit, semantische Suche (
 | Falsch extrahierte Aufgaben | Bestätigung pro Aufgabe statt automatischer Übernahme (Standard) |
 | Kategorien-Wildwuchs | bestehende Kategorien bevorzugen, Zusammenführen-Funktion |
 | Datenschutzbedenken | lokale Verschlüsselung, Transparenz, austauschbarer Endpunkt |
+| Android Auto lässt privat installierte App-Arten nicht zu | Stufe 1 (Messaging) als robuste Basis, Stufe 2 nur nach erfolgreichem Prototyp |
 | Achtsamkeits-Hinweise wirken aufdringlich | sparsam, abschaltbar, Tonalität testen |
 | API-Kosten/-Ausfall | Verbrauchsanzeige, Offline-Queue, Retry |
 
@@ -470,6 +498,7 @@ Wochen- und Monatsrückblicke, Erinnerungen bei Fälligkeit, semantische Suche (
 | Aufgaben aus dem Tagebuch | **Erst nach Bestätigung** als Notiz anlegen |
 | Sprachausgabe | **Ja** – Fragen und Übungen werden vorgelesen, inkl. Freihändig-Modus |
 | Umsetzung | **Kotlin / Jetpack Compose**, Umsetzung in diesem Repository |
+| Android Auto | **Ja**, für den Tagebuch-Dialog auf der Heimfahrt (siehe 7.6) |
 
 Noch offen (bis zur Klärung gelten die Standardwerte):
 - Audio-Aufbewahrung – Standard: 30 Tage, danach automatisch löschen.
