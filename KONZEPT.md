@@ -2,7 +2,7 @@
 
 > Arbeitstitel: **„Tagwerk“** – Android-App zum Diktieren von Notizen und Tagebucheinträgen, mit KI-gestützter Transkription, Ausformulierung, Aufgaben-Extraktion, Kategorisierung und Achtsamkeitsfunktionen.
 
-Stand: 10.10.2026 · Status: Entwurf v0.3 (Entscheidungen siehe Abschnitt 13, Frontend siehe Abschnitt 7)
+Stand: 10.10.2026 · Status: v0.4 – Phase 0 und 1 umgesetzt (Entscheidungen siehe Abschnitt 13, Frontend siehe Abschnitt 7)
 
 ---
 
@@ -130,10 +130,10 @@ Grundsatz: Hinweise sind kurz, freundlich, nie belehrend, und lassen sich in den
 | Sprache | **Kotlin** | Standard für native Android-Entwicklung |
 | UI | **Jetpack Compose**, Material 3 (inkl. Dynamic Color, Dark Mode) | moderne, deklarative UI |
 | Architektur | MVVM + Clean-Architecture-Light (UI / Domain / Data) | testbar, austauschbare KI-Anbindung |
-| DI | Hilt | Standard, gut integriert |
+| DI | manuell (`AppContainer`) | für eine Ein-Personen-App ausreichend, keine Codegenerierung |
 | Datenbank | **Room** + **SQLCipher** | lokale, verschlüsselte Speicherung |
 | Schlüsselverwaltung | Android Keystore, EncryptedSharedPreferences/DataStore für API-Key | API-Key nie im Klartext |
-| Netzwerk | Retrofit oder Ktor-Client + OkHttp, kotlinx.serialization | JSON-Schema-Antworten typisiert parsen |
+| Netzwerk | OkHttp + kotlinx.serialization | JSON-Schema-Antworten typisiert parsen; Fallback auf `json_object` für kompatible Server ohne Structured Outputs |
 | Hintergrundjobs | WorkManager | Offline-Queue, Retries, Abend-Erinnerung |
 | Audio | `MediaRecorder` (AAC/m4a, 16–32 kbit/s mono) | kleine Dateien, von der API unterstützt |
 | Widget | Jetpack Glance | Homescreen-Aufnahme-Widget |
@@ -442,10 +442,10 @@ Annahme: täglich 5 kurze Notizen (à 20 s) + 1 Tagebucheintrag (5 min Sprache).
 
 ## 10. Umsetzungsplan (Phasen)
 
-**Phase 0 – Setup (≈ 1 Woche)**
+**Phase 0 – Setup (≈ 1 Woche)** ✅ umgesetzt
 Projektgerüst (Compose, Hilt, Room/SQLCipher), CI-Build einer signierten APK, Einstellungen mit API-Key.
 
-**Phase 1 – MVP Notizen (≈ 2 Wochen)**
+**Phase 1 – MVP Notizen (≈ 2 Wochen)** ✅ umgesetzt
 Aufnahme, Transkription, Notiz speichern, offen/erledigt, Kategorien inkl. KI-Vorschlag, Liste mit Filtern.
 
 **Phase 2 – Tagebuch (≈ 3 Wochen)**
@@ -469,6 +469,7 @@ Wochen- und Monatsrückblicke, Erinnerungen bei Fälligkeit, semantische Suche (
 
 - Unit-Tests für Use Cases und MindfulnessEngine (Regeln deterministisch testbar).
 - KI-Antworten in Tests per Fake-`AiProvider` simuliert; eine kleine Sammlung echter Beispiel-Transkripte als Regressions-Set für Prompt-Änderungen.
+- Screenshot-Tests (Paparazzi) der wichtigsten Screens – laufen ohne Gerät, auch in der CI.
 - UI-Tests (Compose Testing) für die Kernflüsse Notiz und Tagebuch.
 - Robustheit: Timeouts, Retries, Verhalten bei ungültigem API-Key, leerer Aufnahme, Netzwerkabbruch.
 
