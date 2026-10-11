@@ -87,7 +87,7 @@ class OpenAiProviderTest {
     fun `auth errors are not retryable`() = runTest {
         server.enqueue(MockResponse().setResponseCode(401).setBody("""{"error":{"message":"Incorrect API key"}}"""))
         try {
-            provider.testConnection(config())
+            provider.transcribe(config(), byteArrayOf(1), "a.m4a", "")
             fail("Exception erwartet")
         } catch (e: AiException) {
             assertEquals(AiException.Kind.AUTH, e.kind)
@@ -100,7 +100,7 @@ class OpenAiProviderTest {
     fun `server errors are retryable`() = runTest {
         server.enqueue(MockResponse().setResponseCode(503))
         try {
-            provider.testConnection(config())
+            provider.transcribe(config(), byteArrayOf(1), "a.m4a", "")
             fail("Exception erwartet")
         } catch (e: AiException) {
             assertEquals(AiException.Kind.SERVER, e.kind)
@@ -109,9 +109,101 @@ class OpenAiProviderTest {
     }
 
     @Test
+    fun `missing v1 in base url is retried automatically`() = runTest {
+        server.enqueue(expressNotFound("/audio/transcriptions"))
+        server.enqueue(MockResponse().setBody("""{"text":"Hallo"}"""))
+
+        val result = provider.transcribe(config().copy(baseUrl = server.url("/").toString()), byteArrayOf(1), "a.m4a", "")
+
+        assertEquals("Hallo", result.text)
+        assertEquals("/audio/transcriptions", server.takeRequest().path)
+        assertEquals("/v1/audio/transcriptions", server.takeRequest().path)
+    }
+
+    @Test
+    fun `express 404 is reported with url and readable text`() = runTest {
+        server.enqueue(expressNotFound("/v1/audio/transcriptions"))
+        try {
+            provider.transcribe(config(), byteArrayOf(1), "a.m4a", "")
+            fail("Exception erwartet")
+        } catch (e: AiException) {
+            assertEquals(AiException.Kind.NOT_FOUND, e.kind)
+            assertTrue(!e.retryable)
+            val message = e.message!!
+            assertTrue(message, message.contains("POST " + server.url("/v1/audio/transcriptions")))
+            assertTrue(message, message.contains("Cannot POST /v1/audio/transcriptions"))
+            assertTrue(message, !message.contains("<pre>"))
+        }
+        // Base-URL enthält bereits /v1 → kein zweiter Versuch
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `separate transcription endpoint and key are used`() = runTest {
+        val audioServer = MockWebServer().apply { start() }
+        try {
+            audioServer.enqueue(MockResponse().setBody("""{"text":"Hallo"}"""))
+            val cfg = config().copy(transcriptionBaseUrl = audioServer.url("/v1").toString(), transcriptionApiKey = "sk-audio")
+
+            provider.transcribe(cfg, byteArrayOf(1), "a.m4a", "")
+
+            val request = audioServer.takeRequest()
+            assertEquals("/v1/audio/transcriptions", request.path)
+            assertEquals("Bearer sk-audio", request.getHeader("Authorization"))
+            assertEquals(0, server.requestCount)
+        } finally {
+            audioServer.shutdown()
+        }
+    }
+
+    @Test
+    fun `connection test reports chat and transcription separately`() = runTest {
+        server.enqueue(chatResponse("OK"))
+        server.enqueue(expressNotFound("/v1/audio/transcriptions"))
+
+        val checks = provider.testConnection(config())
+
+        assertEquals(2, checks.size)
+        assertTrue(checks[0].ok)
+        assertTrue(!checks[1].ok)
+        assertTrue(checks[1].message.contains("Endpunkt nicht gefunden"))
+    }
+
+    @Test
+    fun `connection test treats rejected test audio as reachable`() = runTest {
+        server.enqueue(chatResponse("OK"))
+        server.enqueue(MockResponse().setResponseCode(400).setBody("""{"error":{"message":"Audio file is too short"}}"""))
+
+        val checks = provider.testConnection(config())
+
+        assertTrue(checks.all { it.ok })
+    }
+
+    @Test
+    fun `silent wav has valid header`() {
+        val wav = OpenAiProvider.silentWav(500)
+        assertEquals("RIFF", String(wav, 0, 4))
+        assertEquals("WAVE", String(wav, 8, 4))
+        assertEquals(44 + 16_000, wav.size)
+    }
+
+    @Test
+    fun `base url candidates add v1 only when no version is present`() {
+        assertEquals(listOf("https://x.de", "https://x.de/v1"), OpenAiProvider.baseUrlCandidates("https://x.de/"))
+        assertEquals(listOf("https://x.de/api", "https://x.de/api/v1"), OpenAiProvider.baseUrlCandidates("https://x.de/api"))
+        assertEquals(listOf("https://x.de/v1"), OpenAiProvider.baseUrlCandidates("https://x.de/v1/"))
+        assertEquals(listOf("https://x.de/v1beta"), OpenAiProvider.baseUrlCandidates("https://x.de/v1beta"))
+    }
+
+    private fun expressNotFound(path: String) = MockResponse()
+        .setResponseCode(404)
+        .setHeader("Content-Type", "text/html; charset=utf-8")
+        .setBody("<!DOCTYPE html><html><head><title>Error</title></head><body><pre>Cannot POST $path</pre></body></html>")
+
+    @Test
     fun `missing configuration is reported`() = runTest {
         try {
-            provider.testConnection(config().copy(apiKey = ""))
+            provider.transcribe(config().copy(apiKey = ""), byteArrayOf(1), "a.m4a", "")
             fail("Exception erwartet")
         } catch (e: AiException) {
             assertEquals(AiException.Kind.NOT_CONFIGURED, e.kind)

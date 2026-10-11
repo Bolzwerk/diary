@@ -37,7 +37,7 @@ class NoteProcessor(
             // Nach dem Speichern der Einstellungen werden wartende Notizen neu eingeplant.
             return Outcome.DONE
         }
-        val config = AiConfig(current.baseUrl, current.apiKey, current.transcriptionModel, current.chatModel)
+        val config = current.toAiConfig()
         return try {
             transcribeIfNeeded(noteId, config)
             categorizeIfNeeded(noteId, config)

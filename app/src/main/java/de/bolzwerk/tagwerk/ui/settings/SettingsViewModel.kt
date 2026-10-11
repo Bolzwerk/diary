@@ -6,8 +6,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import de.bolzwerk.tagwerk.AppContainer
-import de.bolzwerk.tagwerk.data.ai.AiConfig
-import de.bolzwerk.tagwerk.data.ai.AiException
+import de.bolzwerk.tagwerk.data.ai.ConnectionCheck
 import de.bolzwerk.tagwerk.data.db.UsageSummary
 import de.bolzwerk.tagwerk.data.settings.AppSettings
 import de.bolzwerk.tagwerk.data.settings.AudioRetention
@@ -21,8 +20,7 @@ import java.util.Calendar
 sealed interface ConnectionTest {
     data object Idle : ConnectionTest
     data object Running : ConnectionTest
-    data class Success(val message: String) : ConnectionTest
-    data class Failure(val message: String) : ConnectionTest
+    data class Done(val checks: List<ConnectionCheck>) : ConnectionTest
 }
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
@@ -63,10 +61,12 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         repository.update { draft }
         draft = repository.current
         savedMessage = "Gespeichert"
-        val aiChanged = before.baseUrl != draft.baseUrl || before.apiKey != draft.apiKey ||
-            before.transcriptionModel != draft.transcriptionModel || before.chatModel != draft.chatModel
+        val aiChanged = before.toAiConfig() != draft.toAiConfig()
         if (aiChanged && draft.isAiConfigured) {
-            viewModelScope.launch { container.noteRepository.reschedulePending(replace = true) }
+            viewModelScope.launch {
+                container.noteRepository.reschedulePending(replace = true)
+                container.noteRepository.retryAllFailed()
+            }
         }
     }
 
@@ -75,14 +75,7 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         val settings = repository.current
         connectionTest = ConnectionTest.Running
         viewModelScope.launch {
-            connectionTest = try {
-                val message = container.aiProvider.testConnection(
-                    AiConfig(settings.baseUrl, settings.apiKey, settings.transcriptionModel, settings.chatModel)
-                )
-                ConnectionTest.Success(message)
-            } catch (e: AiException) {
-                ConnectionTest.Failure(e.message ?: "Unbekannter Fehler")
-            }
+            connectionTest = ConnectionTest.Done(container.aiProvider.testConnection(settings.toAiConfig()))
         }
     }
 

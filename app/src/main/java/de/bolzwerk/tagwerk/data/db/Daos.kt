@@ -30,6 +30,9 @@ interface NoteDao {
 
     @Query("SELECT * FROM notes WHERE processingState IN ('PENDING_TRANSCRIPTION', 'PENDING_CATEGORIZATION')")
     suspend fun pending(): List<NoteEntity>
+
+    @Query("SELECT * FROM notes WHERE processingState = 'FAILED'")
+    suspend fun failed(): List<NoteEntity>
 }
 
 @Dao

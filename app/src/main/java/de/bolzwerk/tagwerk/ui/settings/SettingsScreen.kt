@@ -124,6 +124,32 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit, onOpenCateg
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                "Eigener Endpunkt für die Transkription – nur ausfüllen, wenn die Transkription über einen anderen Server laufen soll als der Text " +
+                    "(z. B. weil dein Server keine Audio-Schnittstelle hat). Leer = Endpunkt von oben.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = draft.transcriptionBaseUrl,
+                onValueChange = { v -> viewModel.edit { it.copy(transcriptionBaseUrl = v) } },
+                label = { Text("Base-URL für Transkription (optional)") },
+                placeholder = { Text(draft.baseUrl.ifBlank { "wie oben" }) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = draft.transcriptionApiKey,
+                onValueChange = { v -> viewModel.edit { it.copy(transcriptionApiKey = v) } },
+                label = { Text("API-Key für Transkription (optional)") },
+                placeholder = { Text("wie oben") },
+                singleLine = true,
+                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = viewModel::saveAndTest) { Text("Speichern & testen") }
@@ -234,15 +260,23 @@ private fun ConnectionTestResult(test: ConnectionTest) {
             Spacer(Modifier.width(8.dp))
             Text("Verbindung wird geprüft …", style = MaterialTheme.typography.bodySmall)
         }
-        is ConnectionTest.Success -> Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(test.message, style = MaterialTheme.typography.bodySmall)
-        }
-        is ConnectionTest.Failure -> Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(test.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        is ConnectionTest.Done -> Column(Modifier.padding(top = 8.dp)) {
+            test.checks.forEach { check ->
+                Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.Top) {
+                    Icon(
+                        if (check.ok) Icons.Filled.CheckCircle else Icons.Filled.ErrorOutline,
+                        contentDescription = null,
+                        tint = if (check.ok) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        "${check.name}: ${check.message}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (check.ok) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error,
+                    )
+                }
+            }
         }
     }
 }

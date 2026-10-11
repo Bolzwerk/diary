@@ -34,8 +34,7 @@ class OpenAiProvider(
             .apply { if (glossary.isNotBlank()) addFormDataPart("prompt", "Begriffe und Namen: ${glossary.trim()}") }
             .addFormDataPart("file", fileName, audio.toRequestBody("audio/mp4".toMediaType()))
             .build()
-        val request = requestBuilder(config, "audio/transcriptions").post(body).build()
-        val raw = execute(request)
+        val raw = send(config.transcriptionEndpoint, "audio/transcriptions") { post(body) }
         val parsed = decode<TranscriptionResponse>(raw)
         return TranscriptionResult(
             text = parsed.text.trim(),
@@ -54,11 +53,36 @@ class OpenAiProvider(
         return parseCategorization(completion.content, completion.usage)
     }
 
-    override suspend fun testConnection(config: AiConfig): String {
-        val request = requestBuilder(config, "models").get().build()
-        val raw = execute(request)
-        val count = runCatching { json.decodeFromString<ModelList>(raw).data.size }.getOrNull()
-        return if (count != null) "Verbindung erfolgreich ($count Modelle verfügbar)" else "Verbindung erfolgreich"
+    override suspend fun testConnection(config: AiConfig): List<ConnectionCheck> {
+        val chat = try {
+            val body = buildJsonObject {
+                put("model", config.chatModel)
+                putJsonArray("messages") { addJsonObject { put("role", "user"); put("content", "Antworte nur mit: OK") } }
+            }
+            parseChatResult(send(config.chatEndpoint, "chat/completions") { post(body.toString().toRequestBody(JSON_MEDIA_TYPE)) })
+            ConnectionCheck("Text (${config.chatModel})", ok = true, message = "funktioniert")
+        } catch (e: AiException) {
+            ConnectionCheck("Text (${config.chatModel})", ok = false, message = e.message.orEmpty())
+        }
+
+        val transcription = try {
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart("model", config.transcriptionModel)
+                .addFormDataPart("language", "de")
+                .addFormDataPart("file", "test.wav", silentWav().toRequestBody("audio/wav".toMediaType()))
+                .build()
+            send(config.transcriptionEndpoint, "audio/transcriptions") { post(body) }
+            ConnectionCheck("Transkription (${config.transcriptionModel})", ok = true, message = "funktioniert")
+        } catch (e: AiException) {
+            if (e.kind == AiException.Kind.BAD_REQUEST) {
+                // Der Endpunkt existiert, lehnt nur das stille Testaudio ab – für echte Aufnahmen reicht das.
+                ConnectionCheck("Transkription (${config.transcriptionModel})", ok = true, message = "erreichbar (${e.message})")
+            } else {
+                ConnectionCheck("Transkription (${config.transcriptionModel})", ok = false, message = e.message.orEmpty())
+            }
+        }
+        return listOf(chat, transcription)
     }
 
     /**
@@ -94,11 +118,8 @@ class OpenAiProvider(
                     ResponseFormatMode.PLAIN -> Unit
                 }
             }
-            val request = requestBuilder(config, "chat/completions")
-                .post(body.toString().toRequestBody(JSON_MEDIA_TYPE))
-                .build()
             try {
-                val raw = execute(request)
+                val raw = send(config.chatEndpoint, "chat/completions") { post(body.toString().toRequestBody(JSON_MEDIA_TYPE)) }
                 return parseChatResult(raw)
             } catch (e: AiException) {
                 if (e.kind != AiException.Kind.BAD_REQUEST) throw e
@@ -108,25 +129,41 @@ class OpenAiProvider(
         throw lastError ?: AiException(AiException.Kind.BAD_REQUEST, "Anfrage abgelehnt")
     }
 
-    private fun requestBuilder(config: AiConfig, path: String): Request.Builder {
-        if (config.baseUrl.isBlank() || config.apiKey.isBlank()) {
+    /**
+     * Sendet eine Anfrage an `{baseUrl}/{path}`. Antwortet der Server mit 404/405 und enthält die
+     * Base-URL keine Versionsangabe, wird automatisch `{baseUrl}/v1/{path}` versucht – ein häufiger
+     * Einrichtungsfehler bei eigenen Servern.
+     */
+    private suspend fun send(endpoint: AiEndpoint, path: String, configure: Request.Builder.() -> Request.Builder): String {
+        if (endpoint.baseUrl.isBlank() || endpoint.apiKey.isBlank()) {
             throw AiException(AiException.Kind.NOT_CONFIGURED, "KI-Verbindung ist nicht eingerichtet")
         }
-        val url = runCatching { buildUrl(config.baseUrl, path) }.getOrElse {
-            throw AiException(AiException.Kind.NOT_CONFIGURED, "Ungültige Base-URL: ${config.baseUrl}")
+        val candidates = baseUrlCandidates(endpoint.baseUrl)
+        var notFound: AiException? = null
+        for (base in candidates) {
+            val url = runCatching { buildUrl(base, path) }.getOrElse {
+                throw AiException(AiException.Kind.NOT_CONFIGURED, "Ungültige Base-URL: ${endpoint.baseUrl}")
+            }
+            val request = Request.Builder().url(url).header("Authorization", "Bearer ${endpoint.apiKey}").configure().build()
+            try {
+                return execute(request)
+            } catch (e: AiException) {
+                if (e.kind != AiException.Kind.NOT_FOUND) throw e
+                if (notFound == null) notFound = e
+            }
         }
-        return Request.Builder().url(url).header("Authorization", "Bearer ${config.apiKey}")
+        throw notFound!!
     }
 
     private suspend fun execute(request: Request): String = withContext(Dispatchers.IO) {
         val response: Response = try {
             client.newCall(request).execute()
         } catch (e: IOException) {
-            throw AiException(AiException.Kind.NETWORK, "Keine Verbindung zum KI-Dienst: ${e.message}", e)
+            throw AiException(AiException.Kind.NETWORK, "Keine Verbindung zu ${displayUrl(request)}: ${e.message}", e)
         }
         response.use {
             val text = it.body?.string().orEmpty()
-            if (!it.isSuccessful) throw httpError(it.code, text)
+            if (!it.isSuccessful) throw httpError(it.code, text, "${request.method} ${displayUrl(request)}")
             text
         }
     }
@@ -142,6 +179,30 @@ class OpenAiProvider(
             .writeTimeout(120, TimeUnit.SECONDS)
             .build()
 
+        private val VERSION_SUFFIX = Regex("/v\\d+[a-z0-9]*$", RegexOption.IGNORE_CASE)
+
+        /** Base-URLs, die nacheinander probiert werden: wie eingegeben, ohne Versionsangabe zusätzlich mit `/v1`. */
+        internal fun baseUrlCandidates(baseUrl: String): List<String> {
+            val base = baseUrl.trim().trimEnd('/')
+            return if (VERSION_SUFFIX.containsMatchIn(base)) listOf(base) else listOf(base, "$base/v1")
+        }
+
+        /** URL ohne Query-Parameter für Fehlermeldungen. */
+        private fun displayUrl(request: Request): String =
+            request.url.newBuilder().query(null).build().toString()
+
+        /** Kurzes stilles WAV (16 kHz, mono, 16 Bit) für den Verbindungstest der Transkription. */
+        internal fun silentWav(durationMs: Int = 500): ByteArray {
+            val sampleRate = 16_000
+            val dataSize = sampleRate * durationMs / 1000 * 2
+            val buffer = java.nio.ByteBuffer.allocate(44 + dataSize).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            buffer.put("RIFF".toByteArray()).putInt(36 + dataSize).put("WAVE".toByteArray())
+            buffer.put("fmt ".toByteArray()).putInt(16).putShort(1).putShort(1)
+                .putInt(sampleRate).putInt(sampleRate * 2).putShort(2).putShort(16)
+            buffer.put("data".toByteArray()).putInt(dataSize)
+            return buffer.array()
+        }
+
         /** Verbindet Base-URL und Pfad, unabhängig von abschließenden Schrägstrichen. */
         fun buildUrl(baseUrl: String, path: String): String {
             val base = baseUrl.trim().trimEnd('/')
@@ -149,24 +210,38 @@ class OpenAiProvider(
             return "$base/${path.trimStart('/')}"
         }
 
-        internal fun httpError(code: Int, body: String): AiException {
-            val detail = runCatching { json.decodeFromString<ErrorEnvelope>(body).error?.message }.getOrNull()
-                ?: body.take(200)
+        internal fun httpError(code: Int, body: String, target: String = ""): AiException {
+            val detail = (runCatching { json.decodeFromString<ErrorEnvelope>(body).error?.message }.getOrNull()
+                ?: htmlToText(body)).take(200)
             val kind = when (code) {
                 401, 403 -> AiException.Kind.AUTH
+                404, 405 -> AiException.Kind.NOT_FOUND
                 429 -> AiException.Kind.RATE_LIMIT
-                400, 404, 415, 422 -> AiException.Kind.BAD_REQUEST
-                in 500..599 -> AiException.Kind.SERVER
+                400, 413, 415, 422 -> AiException.Kind.BAD_REQUEST
                 else -> AiException.Kind.SERVER
             }
             val prefix = when (kind) {
                 AiException.Kind.AUTH -> "API-Key ungültig oder keine Berechtigung"
+                AiException.Kind.NOT_FOUND -> "Endpunkt nicht gefunden – Base-URL prüfen (endet meist auf /v1) " +
+                    "bzw. ob der Server diese Funktion anbietet"
                 AiException.Kind.RATE_LIMIT -> "Limit erreicht – später erneut versuchen"
                 AiException.Kind.BAD_REQUEST -> "Anfrage abgelehnt"
                 else -> "Fehler beim KI-Dienst"
             }
-            return AiException(kind, "$prefix (HTTP $code)${if (detail.isNotBlank()) ": $detail" else ""}")
+            return AiException(
+                kind,
+                buildString {
+                    append("$prefix (HTTP $code")
+                    if (target.isNotBlank()) append(", $target")
+                    append(")")
+                    if (detail.isNotBlank()) append(": $detail")
+                },
+            )
         }
+
+        /** Reduziert HTML-Fehlerseiten (z. B. Express „Cannot POST …“) auf ihren Text. */
+        private fun htmlToText(body: String): String =
+            body.replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim()
 
         internal fun parseChatResult(raw: String): ChatResult {
             val response = decode<ChatCompletionResponse>(raw)

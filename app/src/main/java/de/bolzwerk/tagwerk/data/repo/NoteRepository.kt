@@ -151,6 +151,11 @@ class NoteRepository(
         noteDao.pending().forEach { scheduler.enqueueProcessing(it.id, replace = replace) }
     }
 
+    /** Startet alle fehlgeschlagenen Verarbeitungen neu – z. B. nach korrigierten KI-Einstellungen. */
+    suspend fun retryAllFailed() {
+        noteDao.failed().forEach { retryProcessing(it.id) }
+    }
+
     suspend fun audioFileName(noteId: Long): String? {
         val note = noteDao.get(noteId) ?: return null
         return note.audioRecordingId?.let { audioDao.get(it)?.fileName }
