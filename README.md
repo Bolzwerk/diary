@@ -7,6 +7,8 @@ Das vollständige Konzept steht in [`KONZEPT.md`](KONZEPT.md).
 
 - Notiz diktieren: Mikrofon **antippen** (Aufnahme läuft bis „Fertig“) oder **gedrückt halten** (Push-to-talk)
 - Transkription und Einordnung über einen **OpenAI-kompatiblen Endpunkt** (eigene Base-URL + eigener API-Key)
+- Optional eigener Endpunkt nur für die Transkription; Verbindungstest prüft Text und Transkription getrennt
+- Modellauswahl aus der Liste des Servers, gefiltert nach Aufgabe (Text / Transkription)
 - KI vergibt Titel und Kategorien – automatisch oder als Vorschlag (✨) zum Bestätigen
 - Notizen offen/erledigt, Filter nach Status und Kategorie, Suche, Wischgesten
 - Notizen auch tippen; Kategorien verwalten (umbenennen, zusammenführen, Farben)
@@ -27,6 +29,7 @@ Das vollständige Konzept steht in [`KONZEPT.md`](KONZEPT.md).
 2. Unter *Artifacts* `tagwerk-release-…` (oder `tagwerk-debug-…`) herunterladen und entpacken.
 3. Die APK auf dem Handy öffnen und die Installation aus unbekannten Quellen erlauben.
 4. In der App unter **Einstellungen → KI-Verbindung** Base-URL und API-Key eintragen und „Speichern & testen“ tippen.
+   Danach unter **Modelle** die passenden Modelle für Text und Transkription auswählen.
 
 > **Debug- vs. Release-APK:** Die Debug-APK wird in jeder CI-Ausführung mit einem anderen Schlüssel signiert –
 > ein Update erfordert dann Deinstallieren (Daten gehen verloren). Für dauerhafte Nutzung einmalig einen

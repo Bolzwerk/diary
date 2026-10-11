@@ -17,7 +17,16 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.MenuAnchorType
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.remember
+import de.bolzwerk.tagwerk.domain.ModelCatalog
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -110,20 +119,6 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit, onOpenCateg
                 },
                 modifier = Modifier.fillMaxWidth(),
             )
-            OutlinedTextField(
-                value = draft.transcriptionModel,
-                onValueChange = { v -> viewModel.edit { it.copy(transcriptionModel = v) } },
-                label = { Text("Modell für Transkription") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = draft.chatModel,
-                onValueChange = { v -> viewModel.edit { it.copy(chatModel = v) } },
-                label = { Text("Modell für Text") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
             Spacer(Modifier.height(12.dp))
             Text(
                 "Eigener Endpunkt für die Transkription – nur ausfüllen, wenn die Transkription über einen anderen Server laufen soll als der Text " +
@@ -159,6 +154,43 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit, onOpenCateg
             ConnectionTestResult(viewModel.connectionTest)
             viewModel.savedMessage?.takeIf { viewModel.connectionTest == ConnectionTest.Idle }?.let {
                 Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+
+            SectionTitle("Modelle")
+            Text(
+                "Die Liste kommt vom Server und ist nach Aufgabe gefiltert. Eigene Eingaben sind weiterhin möglich.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(8.dp))
+            ModelField(
+                label = "Modell für Text",
+                value = draft.chatModel,
+                onValueChange = { v -> viewModel.edit { it.copy(chatModel = v) } },
+                onSelect = { v -> viewModel.edit { it.copy(chatModel = v) }; viewModel.save() },
+                available = viewModel.chatEndpointModels,
+                purpose = ModelCatalog.Purpose.CHAT,
+            )
+            ModelField(
+                label = "Modell für Transkription",
+                value = draft.transcriptionModel,
+                onValueChange = { v -> viewModel.edit { it.copy(transcriptionModel = v) } },
+                onSelect = { v -> viewModel.edit { it.copy(transcriptionModel = v) }; viewModel.save() },
+                available = viewModel.transcriptionEndpointModels,
+                purpose = ModelCatalog.Purpose.TRANSCRIPTION,
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = viewModel::refreshModels, enabled = draft.isAiConfigured && !viewModel.loadingModels) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Modellliste laden")
+                }
+                if (viewModel.loadingModels) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = viewModel::save, enabled = viewModel.hasUnsavedChanges) { Text("Speichern") }
+            }
+            viewModel.modelsError?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
 
             SectionTitle("Transkription")
@@ -222,6 +254,93 @@ fun SettingsScreen(viewModel: SettingsViewModel, onBack: () -> Unit, onOpenCateg
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+/**
+ * Modellfeld mit Auswahlliste: zeigt die für die Aufgabe passenden Modelle des Servers,
+ * auf Wunsch alle. Freie Eingabe bleibt möglich (z. B. wenn der Server keine Liste liefert).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ModelField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    onSelect: (String) -> Unit,
+    available: List<String>,
+    purpose: ModelCatalog.Purpose,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var showAll by rememberSaveable { mutableStateOf(false) }
+    val suitable = remember(available, purpose) { ModelCatalog.forPurpose(available, purpose) }
+    // Erkennt das Namensmuster kein Modell als passend, lieber alle zeigen als keine.
+    val effectiveShowAll = showAll || suitable.isEmpty()
+    val options = remember(available, purpose, effectiveShowAll) {
+        ModelCatalog.forPurpose(available, purpose, includeAll = effectiveShowAll)
+    }
+    val query = value.trim()
+    val filtered = if (query.isEmpty() || options.any { it.equals(query, ignoreCase = true) }) {
+        options
+    } else {
+        options.filter { it.contains(query, ignoreCase = true) }.ifEmpty { options }
+    }
+    val unknown = available.isNotEmpty() && query.isNotEmpty() && available.none { it.equals(query, ignoreCase = true) }
+    val menuOpen = expanded && available.isNotEmpty()
+
+    ExposedDropdownMenuBox(expanded = menuOpen, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {
+                onValueChange(it)
+                expanded = true
+            },
+            label = { Text(label) },
+            singleLine = true,
+            trailingIcon = { if (available.isNotEmpty()) ExposedDropdownMenuDefaults.TrailingIcon(expanded = menuOpen) },
+            supportingText = when {
+                unknown -> { { Text("Nicht in der Modellliste des Servers") } }
+                available.isNotEmpty() -> { { Text("${suitable.size} passende von ${available.size} Modellen") } }
+                else -> null
+            },
+            isError = unknown,
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor(MenuAnchorType.PrimaryEditable, enabled = available.isNotEmpty()),
+        )
+        ExposedDropdownMenu(expanded = menuOpen, onDismissRequest = { expanded = false }) {
+            filtered.forEach { model ->
+                val fits = ModelCatalog.matches(model, purpose)
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            model,
+                            color = if (fits) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    },
+                    leadingIcon = if (model.equals(query, ignoreCase = true)) {
+                        { Icon(Icons.Filled.Check, contentDescription = null) }
+                    } else null,
+                    onClick = {
+                        onSelect(model)
+                        expanded = false
+                    },
+                    contentPadding = ExposedDropdownMenuDefaults.ItemContentPadding,
+                )
+            }
+            if (suitable.isNotEmpty() && suitable.size < available.size) {
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (showAll) "Nur passende Modelle anzeigen" else "Alle ${available.size} Modelle anzeigen",
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    },
+                    onClick = { showAll = !showAll },
+                )
+            }
         }
     }
 }

@@ -53,6 +53,11 @@ class OpenAiProvider(
         return parseCategorization(completion.content, completion.usage)
     }
 
+    override suspend fun listModels(endpoint: AiEndpoint): List<String> {
+        val raw = send(endpoint, "models") { get() }
+        return decode<ModelList>(raw).data.map { it.id }.filter { it.isNotBlank() }.distinct()
+    }
+
     override suspend fun testConnection(config: AiConfig): List<ConnectionCheck> {
         val chat = try {
             val body = buildJsonObject {
@@ -314,7 +319,10 @@ class OpenAiProvider(
     internal data class CategoryJson(val name: String, @SerialName("is_new") val isNew: Boolean = false)
 
     @Serializable
-    internal data class ModelList(val data: List<JsonObject> = emptyList())
+    internal data class ModelList(val data: List<ModelEntry> = emptyList())
+
+    @Serializable
+    internal data class ModelEntry(val id: String = "")
 
     @Serializable
     internal data class ErrorEnvelope(val error: ErrorBody? = null)

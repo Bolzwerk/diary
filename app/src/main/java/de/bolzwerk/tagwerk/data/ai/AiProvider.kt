@@ -56,6 +56,9 @@ interface AiProvider {
 
     suspend fun categorizeNote(config: AiConfig, noteText: String, existingCategories: List<String>): CategorizationResult
 
+    /** Liefert die IDs aller Modelle, die der Endpunkt unter `/models` meldet. */
+    suspend fun listModels(endpoint: AiEndpoint): List<String>
+
     /** Prüft Chat- und Transkriptions-Endpunkt einzeln (Erreichbarkeit, Pfad, API-Key). */
     suspend fun testConnection(config: AiConfig): List<ConnectionCheck>
 }

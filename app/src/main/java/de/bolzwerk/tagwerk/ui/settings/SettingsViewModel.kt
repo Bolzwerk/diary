@@ -35,6 +35,20 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     var savedMessage by mutableStateOf<String?>(null)
         private set
 
+    /** Vom Server gemeldete Modelle (alle IDs) – gefiltert wird in der Oberfläche je Aufgabe. */
+    var chatEndpointModels by mutableStateOf<List<String>>(emptyList())
+        private set
+    var transcriptionEndpointModels by mutableStateOf<List<String>>(emptyList())
+        private set
+    var modelsError by mutableStateOf<String?>(null)
+        private set
+    var loadingModels by mutableStateOf(false)
+        private set
+
+    init {
+        if (repository.current.isAiConfigured) viewModelScope.launch { loadModels(repository.current) }
+    }
+
     val usage: StateFlow<UsageSummary> = container.database.usageDao()
         .observeSummary(startOfMonth())
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), UsageSummary(0.0, 0, 0))
@@ -75,7 +89,35 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
         val settings = repository.current
         connectionTest = ConnectionTest.Running
         viewModelScope.launch {
+            loadModels(settings)
             connectionTest = ConnectionTest.Done(container.aiProvider.testConnection(settings.toAiConfig()))
+        }
+    }
+
+    fun refreshModels() {
+        save()
+        viewModelScope.launch { loadModels(repository.current) }
+    }
+
+    private suspend fun loadModels(settings: AppSettings) {
+        val config = settings.toAiConfig()
+        loadingModels = true
+        try {
+            val chat = runCatching { container.aiProvider.listModels(config.chatEndpoint) }
+            val transcription = if (config.transcriptionEndpoint == config.chatEndpoint) {
+                chat
+            } else {
+                runCatching { container.aiProvider.listModels(config.transcriptionEndpoint) }
+            }
+            chatEndpointModels = chat.getOrDefault(emptyList())
+            transcriptionEndpointModels = transcription.getOrDefault(emptyList())
+            modelsError = listOfNotNull(chat.exceptionOrNull(), transcription.exceptionOrNull())
+                .map { "Modellliste nicht abrufbar: ${it.message}" }
+                .distinct()
+                .joinToString("\n")
+                .ifBlank { null }
+        } finally {
+            loadingModels = false
         }
     }
 

@@ -180,6 +180,16 @@ class OpenAiProviderTest {
     }
 
     @Test
+    fun `listModels returns ids`() = runTest {
+        server.enqueue(MockResponse().setBody("""{"object":"list","data":[{"id":"gpt-4o-mini","owned_by":"x"},{"id":"whisper-1"}]}"""))
+
+        val models = provider.listModels(config().chatEndpoint)
+
+        assertEquals(listOf("gpt-4o-mini", "whisper-1"), models)
+        assertEquals("/v1/models", server.takeRequest().path)
+    }
+
+    @Test
     fun `silent wav has valid header`() {
         val wav = OpenAiProvider.silentWav(500)
         assertEquals("RIFF", String(wav, 0, 4))
